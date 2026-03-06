@@ -1,11 +1,7 @@
 import os
-from google import genai
+import requests
 from telegram import Update
 from telegram.ext import ContextTypes
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_KEY_AQUI")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """Eres ContadorBot, un asesor financiero virtual experto y amigable. 
 Tu especialidad incluye:
@@ -30,35 +26,46 @@ async def consulta_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
         return
-    
+
     pregunta = update.message.text
     user_name = update.effective_user.first_name
-    
+
     await update.message.reply_text("🤔 Analizando tu consulta...")
-    
+
     try:
-        prompt = f"{SYSTEM_PROMPT}\n\nEl usuario se llama {user_name}.\nPregunta: {pregunta}"
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
-        respuesta = response.text
+        api_key = os.getenv('GEMINI_API_KEY', '')
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": f"{SYSTEM_PROMPT}\n\nEl usuario se llama {user_name}.\nPregunta: {pregunta}"}
+                    ]
+                }
+            ]
+        }
+        
+        response = requests.post(url, json=payload, timeout=30)
+        data = response.json()
+
+        if response.status_code != 200:
+            raise Exception(f"Error API: {data.get('error', {}).get('message', 'Error desconocido')}")
+
+        respuesta = data['candidates'][0]['content']['parts'][0]['text']
+
         if len(respuesta) > 4000:
             partes = [respuesta[i:i+4000] for i in range(0, len(respuesta), 4000)]
             for parte in partes:
                 await update.message.reply_text(parte, parse_mode='Markdown')
         else:
             await update.message.reply_text(respuesta, parse_mode='Markdown')
-        
+
         context.user_data['estado'] = 'esperando_consulta_ia'
-        await update.message.reply_text(
-            "💬 ¿Tenés otra consulta? Escribila directamente o usá /menu para volver al menú.",
-        )
-    
+        await update.message.reply_text("💬 ¿Tenés otra consulta? Escribila o usá /menu.")
+
     except Exception as e:
         await update.message.reply_text(
-            f"❌ Hubo un error al consultar la IA: {str(e)}\n\n"
-            f"Verificá que la API Key de Gemini sea correcta."
+            f"❌ Error al consultar la IA: {str(e)}\n\nVerificá que la API Key de Gemini sea correcta."
         )
         context.user_data['estado'] = None
